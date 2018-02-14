@@ -2,10 +2,10 @@
 
 from cloudify_rest_client.client import CloudifyClient
 from sqlalchemy.sql import select
-import db
 import threading
 import time
 
+SYNC_DELAY = 5
 
 class Syncworker(threading.Thread):
 
@@ -19,27 +19,18 @@ class Syncworker(threading.Thread):
     self._cfypwd = cfypwd
     self._db = db
 
-
   def run(self):
     # connect
     client = CloudifyClient(host=self._cfyhost, port=self._cfyport,
                             trust_all=True, username=self._cfyuser,
                             password=self._cfypwd, tenant=self._cfytenant)
-    
     while(True):
       if self._stop:
         return
+      print "updating db"
       self._db.update_blueprints(client.blueprints.list())
-      return 
-
+      time.sleep(SYNC_DELAY)
 
   def stop(self):
-    self._flag = True
+    self._stop = True
 
-t = Syncworker(db.Database('cfy.db'), "10.239.0.192",80, "default_tenant", "admin", "admin")
-
-t.start()
-
-t.stop()
-
-t.join()

@@ -1,18 +1,29 @@
 from flask import Flask, request, jsonify
 from flask_autodoc.autodoc import Autodoc
 from cloudify_rest_client.client import CloudifyClient
+from templates import catalog_t
+from cfysync import Syncworker
+import signal
+import sys
+import db
 
 # Cloudify service broker implementation
 #
 # Limitations:
 #   - no TLS
 #   - no real authentication (faked basic auth)
+#   - headers ignores (e.g. X-Broker-Api-Version)
 
 
 app = Flask("cloudify-service-broker")
 auto = Autodoc(app)
+worker = None
 
 def main():
+    global worker
+    worker = Syncworker(db.Database('cfy.db'), "10.239.0.192",80, "default_tenant", "admin", "admin")
+    worker.start()
+    signal.signal(signal.SIGINT, signal_handler)
     app.run(host='0.0.0.0', port=5000, threaded=True)
 
 
@@ -47,6 +58,7 @@ def deprovision(instance_id):
 def update(service_id):
     pass
 
+
 # Bind
 #
 @auto.doc()
@@ -62,11 +74,10 @@ def bind(service_id, binding_id):
 def unbind(service_id, binding_id):
     pass
 
+def signal_handler(signal, frame):
+    worker.stop()
+    worker.join()
+    sys.exit(0)
 
 if __name__ == "__main__":
-    #app.run(host='0.0.0.0', port=5000, threaded=True)
-    client = CloudifyClient(host="10.239.0.192", port=8100, trust_all=True, username="admin",
-                            password="admin", tenant="default_tenant")
-    for b in client.blueprints.list():  
-        print b.id
-
+    main()

@@ -25,7 +25,7 @@ class Database(object):
                  Column('password', String))
 
     self._blueprints = Table('Blueprints', metadata,
-                 Column('id', Integer, primary_key=True),
+                 Column('id', Integer, unique=True, primary_key=True),
                  Column('cloudify_id', String),
                  Column('description', String),
                  Column('bindable', Boolean))
@@ -69,21 +69,21 @@ class Database(object):
   #
   def update_blueprints(self, blueprints):
     with(self._lock):
-      for blueprint in blueprints:
-        sel = select([func.count(self._blueprints)]).where(self._blueprints.c.cloudify_id == blueprint['id'])
-        #add blueprint if not already there
-        if self._dbconn.execute(sel).fetchone()[0] == 0:
-          ins = self._blueprints.insert().values(
-                  cloudify_id=blueprint['id'],
-                  description=blueprint['description']
-                  )
-          bpid=self._dbconn.execute(ins).inserted_primary_key
-          for key,val in blueprint['plan']['inputs'].iteritems():
-            inputin = self._inputs.insert().values(
-                      blueprint=bpid,
-                      name=key,
-                      type=val['type'] if 'type' in val else None,
-                      description=val['description'] if val['description'] else None,
-                      default=val['default'] if val['default'] else None)
-            self._dbconn.execute(inputin)
-        break
+      with self._dbconn.begin():
+        for blueprint in blueprints:
+          sel = select([func.count(self._blueprints)]).\
+                  where(self._blueprints.c.cloudify_id == blueprint['id'])
+          #add blueprint if not already there
+          if self._dbconn.execute(sel).fetchone()[0] == 0:
+            ins = self._blueprints.insert().values(
+                    cloudify_id=blueprint['id'],
+                    description=blueprint['description'])
+            bpid=self._dbconn.execute(ins).inserted_primary_key
+            for key,val in blueprint['plan']['inputs'].iteritems():
+              inputin = self._inputs.insert().values(
+                        blueprint=bpid[0],
+                        name=key,
+                        type=val['type'] if 'type' in val else None,
+                        description=val['description'] if 'description' in val else None,
+                        default=val['default'] if 'default' in val and type(val) is not dict else None)
+              self._dbconn.execute(inputin)
