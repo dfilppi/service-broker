@@ -18,10 +18,13 @@ import db
 app = Flask("cloudify-service-broker")
 auto = Autodoc(app)
 worker = None
+database = None
 
 def main():
     global worker
-    worker = Syncworker(db.Database('cfy.db'), "10.239.0.192",80, "default_tenant", "admin", "admin")
+    global database
+    database = db.Database('cfy.db')
+    worker = Syncworker(database, "10.239.0.192",80, "default_tenant", "admin", "admin")
     worker.start()
     signal.signal(signal.SIGINT, signal_handler)
     app.run(host='0.0.0.0', port=5000, threaded=True)
@@ -32,7 +35,18 @@ def main():
 @auto.doc()
 @app.route("/v2/catalog", methods=['GET'])
 def get_catalog():
-    pass
+    blueprints = database.list_blueprints()
+
+    # just supply a default plan for now
+    for service in blueprints['services']:
+      plan = { 
+             'name':'default',
+             'id': service['id'],
+             'description': 'default plan',
+             'free': True
+             }
+      service['plan'] = plan
+    return jsonify(blueprints),200
 
 
 # Provision an service
@@ -75,6 +89,7 @@ def unbind(service_id, binding_id):
     pass
 
 def signal_handler(signal, frame):
+    print "stopping sync worker..."
     worker.stop()
     worker.join()
     sys.exit(0)

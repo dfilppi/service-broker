@@ -65,6 +65,36 @@ class Database(object):
 
 
   ######################################################################
+  # List blueprints in database
+  #
+  # return in catalog syntax for convenience
+  #
+  def list_blueprints(self):
+    with(self._lock):
+      results = {}
+      services = []
+      rows = self._dbconn.execute(select([self._blueprints]))
+      for row in rows:
+        service = {'name':row['cloudify_id'],
+                   'id':row['id'],
+                   'description':row['description'],
+                   'bindable':row['bindable']
+                   }
+        services.append(service)
+      results['services'] = services
+      return results
+
+
+  ######################################################################
+  # List inputs in database for a blueprint
+  #
+  def list_inputs(self, blueprint_id):
+    with(self._lock):
+      rows = self._dbconn.execute(select([self._inputs]).where(
+                                  self._inputs.c.blueprint == blueprint_id))
+      return rows
+
+  ######################################################################
   # Update db with blueprint info
   #
   def update_blueprints(self, blueprints):
