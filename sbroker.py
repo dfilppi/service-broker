@@ -14,6 +14,7 @@ import db
 #   - no real authentication (faked basic auth)
 #   - headers ignores (e.g. X-Broker-Api-Version)
 
+VERSION_HEADER = 'X-Broker-API-Version'
 
 app = Flask("cloudify-service-broker")
 auto = Autodoc(app)
@@ -35,6 +36,7 @@ def main():
 @auto.doc()
 @app.route("/v2/catalog", methods=['GET'])
 def get_catalog():
+    checkapiversion()
     blueprints = database.list_blueprints()
 
     # just supply a default plan for now
@@ -87,6 +89,33 @@ def bind(service_id, binding_id):
 @app.route("/v2/service_instances/<instance_id>/service_bindings/<binding_id>", methods=['DELETE'])
 def unbind(service_id, binding_id):
     pass
+
+
+def checkapiversion():
+    if VERSION_HEADER not in request.headers:
+       raise MissingHeader('Missing API version header', 400)
+    elif request.headers.get(VERSION_HEADER) =='2.13':
+       raise MissingHeader('Unsupported API version: use 2.13', 412)
+
+class MissingHeader(Exception):
+    status_code = 400
+    def __init__(self, message, status_code=None, payload=None):
+        Exception.__init__(self)
+        self.message = message
+        if status_code is not None:
+            self.status_code = status_code
+        self.payload = payload
+
+    def to_dict(self):
+        rv = dict(self.payload or ())
+        rv['message'] = self.message
+        return rv
+
+@app.errorhandler(MissingHeader)
+def handle_missing_header(error):
+    response = jsonify(error.to_dict())
+    response.status_code = error.status_code
+    return response
 
 def signal_handler(signal, frame):
     print "stopping sync worker..."
