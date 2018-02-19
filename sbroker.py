@@ -21,11 +21,49 @@ auto = Autodoc(app)
 worker = None
 database = None
 
+
+def parseargs():
+    usage = """
+        --host <host>          Cloudify server IP or name
+        --port <port>          Cloudify server port (default 80)
+        --tenant <tenant>      Cloudify tenant (default default_tenant)
+        --user <user>          Cloudify user
+        --password <password>  Cloudify password
+    """
+       
+    host = None
+    port = 80
+    tenant = 'default_tenant'
+    user = None
+    password = None
+    while len(sys.argv) > 1:
+        arg = sys.argv.pop(1)   
+        if arg == '-h':
+            print usage
+            sys.exit(1)
+        elif arg == '--host':
+            host = sys.argv.pop(1)
+        elif arg == '--port':
+            port = sys.argv.pop(1)
+        elif arg == '--tenant':
+            tenant = sys.argv.pop(1)
+        elif arg == '--user':
+            user = sys.argv.pop(1)
+        elif arg == '--password':
+            password = sys.argv.pop(1)
+    if not host or not user or not password:
+        print 'Missing argument'
+        print usage
+        sys.exit(1)
+    return host,port,tenant,user,password
+    
+        
 def main():
     global worker
     global database
+    host,port,tenant,user,password = parseargs()
     database = db.Database('cfy.db')
-    worker = Syncworker(database, "10.239.0.192",80, "default_tenant", "admin", "admin")
+    worker = Syncworker(database, host, port, tenant, user, password)
     worker.start()
     signal.signal(signal.SIGINT, signal_handler)
     app.run(host='0.0.0.0', port=5000, threaded=True)
