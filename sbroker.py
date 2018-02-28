@@ -1,8 +1,9 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, json
 from flask_autodoc.autodoc import Autodoc
 from cloudify_rest_client.client import CloudifyClient
 from templates import catalog_t
 from cfysync import Syncworker
+import uuid
 import signal
 import sys
 import db
@@ -13,6 +14,7 @@ import db
 #   - no TLS
 #   - no real authentication (faked basic auth)
 #   - headers ignores (e.g. X-Broker-Api-Version)
+#   - header X-Broker-API-Origin ignored
 
 VERSION_HEADER = 'X-Broker-API-Version'
 
@@ -20,8 +22,12 @@ app = Flask("cloudify-service-broker")
 auto = Autodoc(app)
 worker = None
 database = None
+client = None
 
 
+########################################
+# Parse CLI args
+########################################
 def parseargs():
     usage = """
         --host <host>          Cloudify server IP or name
@@ -61,15 +67,27 @@ def parseargs():
 def main():
     global worker
     global database
+    global client
     host,port,tenant,user,password = parseargs()
     database = db.Database('cfy.db')
-    worker = Syncworker(database, host, port, tenant, user, password)
+    client = CloudifyClient(host=host, port=port,
+                            trust_all=True, user=user,
+                            password=password, tenant=tenant)
+    worker = Syncworker(database, client)
     worker.start()
     signal.signal(signal.SIGINT, signal_handler)
     app.run(host='0.0.0.0', port=5000, threaded=True)
 
 
+########################################
+########################################
+# REST API
+########################################
+########################################
+
+########################################
 # List catalog entries
+########################################
 #
 @auto.doc()
 @app.route("/v2/catalog", methods=['GET'])
@@ -89,45 +107,118 @@ def get_catalog():
     return jsonify(blueprints),200
 
 
-# Provision an service
+########################################
+# Provision a service
+#
+########################################
 #
 @auto.doc()
-@app.route("/v2/service_instances/<service_id>", methods=['PUT'])
-def provision(service_id):
-    pass
+@app.route("/v2/service_instances/<instance_id>", methods=['PUT'])
+def provision(instance_id):
+    checkapiversion()
+
+    # Handle async query arg   ####################
+    asyncflag = False
+    try:
+      asyncflag = bool(request.args.get("accepts_incomplete"))
+    except: 
+      pass
+    if not asyncflag:
+      return '{"error":"AsyncRequired","description":"This service plan requires client support for asynchronous service operations."}', 422
+
+    # parse body  ####################
+    body = json.loads(request.data)    
+    service_id = body['service_id']
+    blueprint_id = database.get_blueprint_by_id(service_id)['
+    plan_id = body['plan_id']
+    # ignore context for now
+    # ignore org_guid
+    # ignore space_guid
+    inputs = body['parameters']
+
+    deployment = client.deployments.create(blueprint_id, instance_id, inputs)
+    if not deployment:
+      return "Deployment creation failed", 500
+    execution = client.executions.start(instance_id, "install")
+    if not ( execution.status == Execution.STARTED ||
+             execution.status == Execution.PENDING ):
+     return "Install execution failed", 500
+
+    # Update deployment state
+    database.create_deployment(instance_id, blueprint_id)
+    return "",202
+
+    
+########################################
+# Polling last operation
+#
+########################################
+#
+@auto.doc()
+@app.route("/v2/service_instances/<instance_id>/last_operation", methods=['GET'])
+def poll(instance_id):
+    checkapiversion()
+
+    service_id = request.args.get("service_id")
+    plan_id = request.args.get("plan_id")
+    operation = request.args.get("operation")
+
+    status = db.get_deployment_status(instance_id)
+    if not status:
+      return "Unknown instance", 500
+    elif status == "started":
+      //query server for current status
+    elif status == "running":
+      //query server for current status 
+    elif status == "stopped":
+      //return status
+    elif status == "error":
+      //return status
+    else
+      return "Unknown status:"+status, 500
 
 
+###########################################################
 # Deprovision
 #
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>", methods=['DELETE'])
 def deprovision(instance_id):
-    pass
+    checkapiversion()
 
 
+###########################################################
 # Update an entry
 #
 @auto.doc()
 @app.route("/v2/service_instances/<service_id>", methods=['PATCH'])
 def update(service_id):
-    pass
+    checkapiversion()
 
 
+###########################################################
 # Bind
 #
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>/service_bindings/<binding_id>", methods=['PUT'])
 def bind(service_id, binding_id):
-    pass
+    checkapiversion()
 
 
+###########################################################
 # Unbind
 #
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>/service_bindings/<binding_id>", methods=['DELETE'])
 def unbind(service_id, binding_id):
-    pass
+    checkapiversion()
 
+
+########################################
+########################################
+# Utility functions
+########################################
+########################################
 
 def checkapiversion():
     if VERSION_HEADER not in request.headers:

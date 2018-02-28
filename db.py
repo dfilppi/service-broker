@@ -30,6 +30,11 @@ class Database(object):
                  Column('description', String),
                  Column('bindable', Boolean))
 
+    self._deployments = Table('Deployments', metadata,
+                 Column('deployment_id', String, primary_key=True),
+                 Column('blueprint_id', Integer),
+                 Column('last_operation', String))
+
     self._inputs = Table('Inputs', metadata,
                  Column('id', Integer, primary_key=True),
                  Column('blueprint', Integer),
@@ -54,7 +59,7 @@ class Database(object):
 
 
   ######################################################################
-  #
+  # Inserts a cloudify server (UNUSED)
   #
   def set_server(self, id, ip, port, tenant_name, user_name, password): 
     with(self._lock):
@@ -84,6 +89,16 @@ class Database(object):
       results['services'] = services
       return results
 
+  
+  ######################################################################
+  # Get blueprint by id
+  #
+  def get_blueprint_by_id(self,id):
+    with(self._lock):
+      row = self._dbconn.execute(select([self._blueprints]).where(
+                                  self._blueprints.c.id == id)).fetchone()
+      return row
+      
 
   ######################################################################
   # List inputs in database for a blueprint
@@ -93,6 +108,38 @@ class Database(object):
       rows = self._dbconn.execute(select([self._inputs]).where(
                                   self._inputs.c.blueprint == blueprint_id))
       return rows
+
+
+  ######################################################################
+  # Create a deployment
+  #
+  def create_deployment(self, deployment_id, blueprint_id):
+    with(self._lock):
+      ins = self._deployments.insert().values(
+                                blueprint_id,
+                                deployment_id,
+                                "started") 
+      self._dbconn.execute(ins)
+
+
+  ######################################################################
+  # Update deployment status
+  #
+  def update_deployment_status(self, deployment_id, status):
+    with(self._lock):
+      upd = self._deployments.update().values(status = status).where(
+                 self._deployments.c.deployment_id == deployment_id))
+      self._dbconn.execute(upd)
+
+
+  ######################################################################
+  # Get deployment status
+  #
+  def get_deployment_status(self, deployment_id):
+    with(self._lock):
+      row = self._dbconn.execute(select([self._deployments]).where(
+                  self._deployments.c.deployment_id == deployment_id))
+
 
   ######################################################################
   # Update db with blueprint info
