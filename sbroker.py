@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, json
 from flask_autodoc.autodoc import Autodoc
 from cloudify_rest_client.client import CloudifyClient
-from templates import catalog_t
 from cfysync import Syncworker
 import uuid
 import signal
@@ -151,6 +150,8 @@ def provision(instance_id):
     
 ########################################
 # Polling last operation
+#
+# WIP
 #
 ########################################
 #
