@@ -102,8 +102,9 @@ def get_catalog():
              'description': 'default plan',
              'free': True
              }
-      service['plan'] = plan
-    return jsonify(blueprints),200
+      service['plans'] = [] if 'plans' not in service else service['plans']
+      service['plans'].append(plan)
+    return jsonify(blueprints), 200
 
 
 ########################################
@@ -228,8 +229,8 @@ def unbind(service_id, binding_id):
 def checkapiversion():
     if VERSION_HEADER not in request.headers:
        raise MissingHeader('Missing API version header', 400)
-    elif request.headers.get(VERSION_HEADER) =='2.13':
-       raise MissingHeader('Unsupported API version: use 2.13', 412)
+    elif request.headers.get(VERSION_HEADER) !='2.13':
+       raise MissingHeader('Unsupported API version: {} use 2.13'.format(request.headers.get(VERSION_HEADER)), 412)
 
 class MissingHeader(Exception):
     status_code = 400

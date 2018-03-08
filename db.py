@@ -81,10 +81,12 @@ class Database(object):
       rows = self._dbconn.execute(select([self._blueprints]))
       for row in rows:
         service = {'name':row['cloudify_id'],
-                   'id':row['id'],
+                   'id':str(row['id']),
                    'description':row['description'],
                    'bindable':row['bindable']
                    }
+        if not service['description'] or len(service['description']) ==0:
+          service['description'] = 'undescribed'
         services.append(service)
       results['services'] = services
       return results
