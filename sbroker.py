@@ -71,7 +71,7 @@ def main():
     host,port,tenant,user,password = parseargs()
     database = db.Database('cfy.db')
     client = CloudifyClient(host=host, port=port,
-                            trust_all=True, user=user,
+                            trust_all=True, username=user,
                             password=password, tenant=tenant)
     worker = Syncworker(database, client)
     worker.start()
@@ -129,7 +129,7 @@ def provision(instance_id):
     # parse body  ####################
     body = json.loads(request.data)    
     service_id = body['service_id']
-    blueprint_id = database.get_blueprint_by_id(service_id)['
+    blueprint_id = database.get_blueprint_by_id(service_id)
     plan_id = body['plan_id']
     # ignore context for now
     # ignore org_guid
@@ -140,7 +140,7 @@ def provision(instance_id):
     if not deployment:
       return "Deployment creation failed", 500
     execution = client.executions.start(instance_id, "install")
-    if not ( execution.status == Execution.STARTED ||
+    if not ( execution.status == Execution.STARTED or
              execution.status == Execution.PENDING ):
      return "Install execution failed", 500
 
@@ -167,14 +167,18 @@ def poll(instance_id):
     if not status:
       return "Unknown instance", 500
     elif status == "started":
-      //query server for current status
+      # query server for current status
+      pass
     elif status == "running":
-      //query server for current status 
+      # query server for current status 
+      pass
     elif status == "stopped":
-      //return status
+      # return status
+      pass
     elif status == "error":
-      //return status
-    else
+      # return status
+      pass
+    else:
       return "Unknown status:"+status, 500
 
 

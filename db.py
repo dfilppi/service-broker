@@ -128,7 +128,7 @@ class Database(object):
   def update_deployment_status(self, deployment_id, status):
     with(self._lock):
       upd = self._deployments.update().values(status = status).where(
-                 self._deployments.c.deployment_id == deployment_id))
+                 self._deployments.c.deployment_id == deployment_id)
       self._dbconn.execute(upd)
 
 

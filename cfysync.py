@@ -14,7 +14,7 @@ SYNC_DELAY = 5
 #
 class Syncworker(threading.Thread):
 
-  def __init__(self, client):
+  def __init__(self, db, client):
     threading.Thread.__init__(self)
     self._client = client
     self._stop = False
