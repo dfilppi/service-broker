@@ -1,10 +1,13 @@
 from flask import Flask, request, jsonify, json
 from flask_autodoc.autodoc import Autodoc
-from cloudify_rest_client.client import CloudifyClient
+from cloudify_rest_client.client import CloudifyClient, exceptions
+from cloudify_rest_client.executions import Execution
 from cfysync import Syncworker
+import logging
 import uuid
 import signal
 import sys
+import time
 import db
 
 # Cloudify service broker implementation
@@ -22,6 +25,10 @@ auto = Autodoc(app)
 worker = None
 database = None
 client = None
+
+logging.basicConfig(filename="sbroker.log", format="%(asctime)s %(levelname)-7s %(module)s %(funcName)8.8s - %(message)s")
+logger = logging.getLogger(__name__)
+logger.setLevel(10)
 
 
 ########################################
@@ -72,7 +79,7 @@ def main():
     client = CloudifyClient(host=host, port=port,
                             trust_all=True, username=user,
                             password=password, tenant=tenant)
-    worker = Syncworker(database, client)
+    worker = Syncworker(database, client, logger)
     worker.start()
     signal.signal(signal.SIGINT, signal_handler)
     app.run(host='0.0.0.0', port=5000, threaded=True)
@@ -80,7 +87,7 @@ def main():
 
 ########################################
 ########################################
-# REST API
+# OPEN SERVICE BROKER REST API
 ########################################
 ########################################
 
@@ -117,6 +124,8 @@ def get_catalog():
 def provision(instance_id):
     checkapiversion()
 
+    logger.debug( "PROVISIONING")
+
     # Handle async query arg   ####################
     asyncflag = False
     try:
@@ -129,30 +138,61 @@ def provision(instance_id):
     # parse body  ####################
     body = json.loads(request.data)    
     service_id = body['service_id']
-    blueprint_id = database.get_blueprint_by_id(service_id)
+    blueprint_id = database.get_blueprint_by_id(service_id)[1]
     plan_id = body['plan_id']
     # ignore context for now
     # ignore org_guid
     # ignore space_guid
-    inputs = body['parameters']
+
+    # Check for existence
+    err = False
+    try:
+      deployment = client.deployments.get( instance_id)
+    except exceptions.CloudifyClientError as e:
+      err = True
+
+    if not err:
+      # Already exists
+      logger.debug("deployment exists")
+      return jsonify({"dashboard_url":"http://none.com"}), 200
+
+    inputs = body['parameters'] if 'parameters' in body else None
 
     deployment = client.deployments.create(blueprint_id, instance_id, inputs)
+
     if not deployment:
       return "Deployment creation failed", 500
-    execution = client.executions.start(instance_id, "install")
+
+    # Launch install execution
+    time.sleep(2)   # takes longer than this for deployment creation
+    i = 0
+    execution = None
+    for i in range(30):
+      try:
+        execution = client.executions.start(instance_id, "install")
+        break
+      except (exceptions.DeploymentEnvironmentCreationPendingError,
+              exceptions.DeploymentEnvironmentCreationInProgressError):
+        logging.debug("waiting for env")
+        time.sleep(2)    
+
+    if i == 29:
+      return "Install execution timed out", 500
+
     if not ( execution.status == Execution.STARTED or
              execution.status == Execution.PENDING ):
-     return "Install execution failed", 500
+      return "Install execution failed", 500
 
     # Update deployment state
     database.create_deployment(instance_id, blueprint_id)
-    return "",202
+
+    return "{}",202
 
     
 ########################################
 # Polling last operation
 #
-# WIP
+# Asynchronous polling for operation status
 #
 ########################################
 #
@@ -161,27 +201,27 @@ def provision(instance_id):
 def poll(instance_id):
     checkapiversion()
 
+    logging.debug("POLLING")
+
     service_id = request.args.get("service_id")
     plan_id = request.args.get("plan_id")
     operation = request.args.get("operation")
 
-    status = db.get_deployment_status(instance_id)
+    status = database.get_deployment_status(instance_id)
     if not status:
-      return "Unknown instance", 500
+      logging.error("NO STATUS")
+      return jsonify({"description":"Unknown instance"}), 500
     elif status == "started":
-      # query server for current status
-      pass
-    elif status == "running":
-      # query server for current status 
-      pass
-    elif status == "stopped":
-      # return status
-      pass
+      return jsonify({"state":"in progress","description":"Service instantiation in progress"})
+    elif status == "cancelled":
+      return jsonify({"state":"error","description":"Service cancelled"})
     elif status == "error":
-      # return status
-      pass
+      return jsonify({"state":"error","description":"Service instantiation failed"})
+    elif status == "terminated":
+      return jsonify({"state":"succeeded","description":"Service instantiation complete"})
     else:
-      return "Unknown status:"+status, 500
+      logging.error("ELSE = {}".format(status))
+      return jsonify({"description":"Unknown status = {}".format(status)}), 500
 
 
 ###########################################################
@@ -191,6 +231,7 @@ def poll(instance_id):
 @app.route("/v2/service_instances/<instance_id>", methods=['DELETE'])
 def deprovision(instance_id):
     checkapiversion()
+    return "", 200
 
 
 ###########################################################
@@ -221,6 +262,11 @@ def unbind(service_id, binding_id):
 
 
 ########################################
+# CLI SUPPORT REST API
+########################################
+
+
+########################################
 ########################################
 # Utility functions
 ########################################
@@ -230,7 +276,7 @@ def checkapiversion():
     if VERSION_HEADER not in request.headers:
        raise MissingHeader('Missing API version header', 400)
     elif request.headers.get(VERSION_HEADER) !='2.13':
-       raise MissingHeader('Unsupported API version: {} use 2.13'.format(request.headers.get(VERSION_HEADER)), 412)
+       raise MissingHeader(jsonify({"description":'Unsupported API version: {} use 2.13'.format(request.headers.get(VERSION_HEADER))}), 412)
 
 class MissingHeader(Exception):
     status_code = 400
