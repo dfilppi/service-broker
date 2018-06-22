@@ -2,11 +2,14 @@
 
 from cloudify_rest_client.client import CloudifyClient
 from sqlalchemy.sql import select
+import json
 import logging
 import threading
 import time
 
 SYNC_DELAY = 5
+EX_COMPLETE = "terminated"
+WF_INSTALL = "install"
 
 ##################################################
 # Updates the database periodically with blueprint
@@ -14,6 +17,7 @@ SYNC_DELAY = 5
 ##################################################
 #
 class Syncworker(threading.Thread):
+
 
   def __init__(self, db, client, logger):
     threading.Thread.__init__(self)
@@ -47,7 +51,7 @@ class Syncworker(threading.Thread):
           for deployment in deployments:
             if(self._db.get_deployment_status(deployment['id'])):
               self._logger.debug( "syncworker -- deployment: {}".format(deployment['id']))
-              execs = self._client.executions.list(deployment_id = deployment['id'], workflow_id = "install" )
+              execs = self._client.executions.list(deployment_id = deployment['id'], workflow_id = WF_INSTALL )
               if self._stop:
                 self._db.rollback()
                 self._db.close()
@@ -55,6 +59,9 @@ class Syncworker(threading.Thread):
               for e in execs:
                 self._logger.debug( "syncworker -- execution {}".format(e['status']))
                 self._db.update_deployment_status(deployment['id'], e['status'])
+                if e['status'] == EX_COMPLETE:
+                  outputs = self._client.deployments.outputs.get(deployment['id'])
+                  self._db.update_deployment_outputs(deployment.id, json.dumps(outputs))
                 break
 
         self._db.commit()

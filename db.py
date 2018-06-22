@@ -9,55 +9,48 @@ import threading
 class Database(object):
 
   def __init__(self, dbpath):
-    engine = create_engine('sqlite:///'+dbpath,
-             connect_args={'check_same_thread':False})
-    self._session = sessionmaker(bind=engine, autocommit = False)() 
-    metadata = MetaData()
-
-
-    ##################
-    # Table defs
-    ##################
-    self._server = Table('ServerInfo', metadata,
-                 Column('id', Integer, primary_key=True),
-                 Column('ip', String),
-                 Column('port', Integer),
-                 Column('tenant_name', String),
-                 Column('user_name', String),
-                 Column('password', String))
-
-    self._blueprints = Table('Blueprints', metadata,
-                 Column('id', Integer, unique=True, primary_key=True),
-                 Column('cloudify_id', String),
-                 Column('description', String),
-                 Column('bindable', Boolean))
-
-    self._deployments = Table('Deployments', metadata,
-                 Column('deployment_id', String, primary_key=True),
-                 Column('blueprint_id', Integer),
-                 Column('last_operation', String))
-
-    self._inputs = Table('Inputs', metadata,
-                 Column('id', Integer, primary_key=True),
-                 Column('blueprint', Integer),
-                 Column('name', String),
-                 Column('type', String),
-                 Column('description', String),
-                 Column('default', String)
-                 )
-
-    self._tags = Table('Tags', metadata,
-                 Column('id', Integer, primary_key=True),
-                 Column('blueprint', Integer),
-                 Column('tag', String))
-
-    self._requires = Table('Requires', metadata,
-                 Column('id', Integer, primary_key=True),
-                 Column('blueprint', Integer),
-                 Column('permission', String))
-
-    metadata.create_all(engine)
     self._lock = threading.Lock()
+
+    with(self._lock):
+      engine = create_engine('sqlite:///'+dbpath,
+               connect_args={'check_same_thread':False})
+      self._session = sessionmaker(bind=engine, autocommit = False)() 
+      metadata = MetaData()
+  
+      self._blueprints = Table('Blueprints', metadata,
+                   Column('id', Integer, unique=True, primary_key=True),
+                   Column('cloudify_id', String),
+                   Column('description', String),
+                   Column('binder', String),
+                   Column('binder_config', String)
+                   )
+  
+      self._deployments = Table('Deployments', metadata,
+                   Column('deployment_id', String, primary_key=True),
+                   Column('blueprint_id', Integer),
+                   Column('outputs', String),
+                   Column('last_operation', String))
+  
+      self._inputs = Table('Inputs', metadata,
+                   Column('id', Integer, primary_key=True),
+                   Column('blueprint', Integer),
+                   Column('name', String),
+                   Column('type', String),
+                   Column('description', String),
+                   Column('default', String)
+                   )
+     
+      self._tags = Table('Tags', metadata,
+                   Column('id', Integer, primary_key=True),
+                   Column('blueprint', Integer),
+                   Column('tag', String))
+  
+      self._requires = Table('Requires', metadata,
+                   Column('id', Integer, primary_key=True),
+                   Column('blueprint', Integer),
+                   Column('permission', String))
+  
+      metadata.create_all(engine)
 
 
   ######################################################################
@@ -74,18 +67,20 @@ class Database(object):
   ######################################################################
   # List blueprints in database
   #
-  # return in catalog syntax for convenience
+  # return in catalog syntax for convenience.  If canonical is true, ensure
+  # proper service catalog naming [-a-zA-Z0-9]
   #
-  def list_blueprints(self):
+  def list_blueprints(self, canonical=False):
     with(self._lock):
       results = {}
       services = []
       rows = self._session.execute(select([self._blueprints]))
       for row in rows:
-        service = {'name':row['cloudify_id'],
+        name = row['cloudify_id'].replace('_','-') if canonical else row['cloudify_id']
+        service = {'name':name,
                    'id':str(row['id']),
                    'description':row['description'],
-                   'bindable':row['bindable']
+                   'binder': row['binder']
                    }
         if not service['description'] or len(service['description']) ==0:
           service['description'] = 'undescribed'
@@ -102,6 +97,16 @@ class Database(object):
       row = self._session.execute(select([self._blueprints]).where(
                                   self._blueprints.c.id == id)).fetchone()
       return row
+      
+  ######################################################################
+  # Get blueprint by instance/deployment id
+  #
+  def get_blueprint_by_deployment_id(self,instance_id):
+    with(self._lock):
+      row = self._session.execute(select([self._deployments]).where(
+                                  self._deployments.c.deployment_id == instance_id)).fetchone()
+      return self._session.execute(select([self._blueprints]).where(
+                                  self._blueprints.c.id == row['blueprint_id'])).fetchone()
       
 
   ######################################################################
@@ -135,6 +140,14 @@ class Database(object):
                  self._deployments.c.deployment_id == deployment_id)
       self._session.execute(upd)
 
+  ######################################################################
+  # Update deployment outputs
+  #
+  def update_deployment_outputs(self, deployment_id, outputs):
+    with(self._lock):
+      upd = self._deployments.update().values(outputs = outputs).where(
+                 self._deployments.c.deployment_id == deployment_id)
+      self._session.execute(upd)
 
   ######################################################################
   # Get deployment status
@@ -146,6 +159,15 @@ class Database(object):
       if not row: return None
       return row['last_operation']
 
+  ######################################################################
+  # Get deployment
+  #
+  def get_deployment(self, deployment_id):
+    with(self._lock):
+      row = self._session.execute(select([self._deployments]).where(
+                  self._deployments.c.deployment_id == deployment_id)).fetchone()
+      if not row: return None
+      return row
 
   ######################################################################
   # Update db with blueprint info
@@ -170,7 +192,31 @@ class Database(object):
                       default=val['default'] if 'default' in val and type(val) is not dict else None)
             self._session.execute(inputin)
 
-  ##################################################################3
+  ######################################################################
+  # Check binding
+  #
+  def binding_exists(self, binding_id):
+    with(self._lock):
+      row = self._session.execute(select([self._bindings]).where(
+                  self._bindings.c.id == binding_id)).fetchone()
+      return row != None
+
+  ######################################################################
+  # Add binding.  Returns success boolean
+  #
+  def add_binding(self, binding_id, instance_id, plan_id):
+    try:
+      with(self._lock):
+        ins = self._bindins.insert().values( 
+                                 id = binding_id,
+                                 instance = instance_id,
+                                 plan = plan_id)
+        self._session.execute(ins)
+    except:
+      return False
+    return True
+
+  ###################################################################
   # begin/commit/rollback
 
   def commit(self): self._session.commit()

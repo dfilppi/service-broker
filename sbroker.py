@@ -3,6 +3,7 @@ from flask_autodoc.autodoc import Autodoc
 from cloudify_rest_client.client import CloudifyClient, exceptions
 from cloudify_rest_client.executions import Execution
 from cfysync import Syncworker
+from binders.vault import VaultBinder
 import logging
 import uuid
 import signal
@@ -15,16 +16,22 @@ import db
 # Limitations:
 #   - no TLS
 #   - no real authentication (faked basic auth)
+#   - no "originating entity" handling
 #   - headers ignores (e.g. X-Broker-Api-Version)
 #   - header X-Broker-API-Origin ignored
+#   - simple binding: no "BindResource"
+#   - simple binding: no service binding schema
+#   - binding limited to credential binding
 
 VERSION_HEADER = 'X-Broker-API-Version'
+BROKER_PORT = 5000
 
 app = Flask("cloudify-service-broker")
 auto = Autodoc(app)
 worker = None
 database = None
 client = None
+binders = { "vault": VaultBinder }
 
 logging.basicConfig(filename="sbroker.log", format="%(asctime)s %(levelname)-7s %(module)s %(funcName)8.8s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,13 +48,19 @@ def parseargs():
         --tenant <tenant>      Cloudify tenant (default default_tenant)
         --user <user>          Cloudify user
         --password <password>  Cloudify password
+        --binder               Binder to use for credential generation (default: vault)
+        --binder-creds <creds> Binding service connection info & credentials (string).  Binder specific.
     """
        
+    global binders
     host = None
     port = 80
     tenant = 'default_tenant'
     user = None
     password = None
+    binder_name = 'vault'
+    binder_creds = None
+    binder = None
     while len(sys.argv) > 1:
         arg = sys.argv.pop(1)   
         if arg == '-h':
@@ -63,18 +76,28 @@ def parseargs():
             user = sys.argv.pop(1)
         elif arg == '--password':
             password = sys.argv.pop(1)
+        elif arg == '--binder':
+            binder_name = sys.argv.pop(1)
+        elif arg == '--binder-creds':
+            binder_creds = sys.argv.pop(1)
     if not host or not user or not password:
         print 'Missing argument'
         print usage
         sys.exit(1)
-    return host,port,tenant,user,password
+
+    if not binder_creds:
+        print 'WARNING: No binder credentials supplied'
+
+    binder = binders[binder_name]
+       
+    return host,port,tenant,user,password, binder, binder_creds
     
         
 def main():
     global worker
     global database
     global client
-    host,port,tenant,user,password = parseargs()
+    host, port, tenant, user, password, binder, binder_creds = parseargs()
     database = db.Database('cfy.db')
     client = CloudifyClient(host=host, port=port,
                             trust_all=True, username=user,
@@ -82,7 +105,7 @@ def main():
     worker = Syncworker(database, client, logger)
     worker.start()
     signal.signal(signal.SIGINT, signal_handler)
-    app.run(host='0.0.0.0', port=5000, threaded=True)
+    app.run(host='0.0.0.0', port=BROKER_PORT, threaded=True)
 
 
 ########################################
@@ -99,19 +122,31 @@ def main():
 @app.route("/v2/catalog", methods=['GET'])
 def get_catalog():
     checkapiversion()
-    blueprints = database.list_blueprints()
+    logger.debug("CATALOG GET")
+    blueprints = database.list_blueprints(canonical=True)
+    resplist = {}
+    resplist['services'] = []
 
     # just supply a default plan for now
     for service in blueprints['services']:
+      bindable = bool(service['binder'])
+      resp_svc = {}
       plan = { 
              'name':'default',
              'id': service['id'],
              'description': 'default plan',
+             'bindable': bindable,
              'free': True
              }
-      service['plans'] = [] if 'plans' not in service else service['plans']
-      service['plans'].append(plan)
-    return jsonify(blueprints), 200
+      resp_svc['plans'] = [] if 'plans' not in resp_svc else resp_svc['plans']
+      resp_svc['plans'].append(plan)
+      resp_svc['name'] = service['name']
+      resp_svc['id'] = service['id']
+      resp_svc['description'] = service['description']
+      resp_svc['bindable'] = bindable
+      resplist['services'].append(resp_svc)
+    logger.debug("  returning {}".format(jsonify(resplist).get_data()))
+    return jsonify(resplist), 200
 
 
 ########################################
@@ -138,7 +173,8 @@ def provision(instance_id):
     # parse body  ####################
     body = json.loads(request.data)    
     service_id = body['service_id']
-    blueprint_id = database.get_blueprint_by_id(service_id)[1]
+    logger.debug("service_id = {}".format(service_id))
+    blueprint_id = database.get_blueprint_by_id(service_id)[0]
     plan_id = body['plan_id']
     # ignore context for now
     # ignore org_guid
@@ -231,7 +267,8 @@ def poll(instance_id):
 @app.route("/v2/service_instances/<instance_id>", methods=['DELETE'])
 def deprovision(instance_id):
     checkapiversion()
-    return "", 200
+    logger.info("DEPROVISIONING {}".format(instance_id))
+    return "{}", 200
 
 
 ###########################################################
@@ -241,6 +278,7 @@ def deprovision(instance_id):
 @app.route("/v2/service_instances/<service_id>", methods=['PATCH'])
 def update(service_id):
     checkapiversion()
+    #unimplemented
 
 
 ###########################################################
@@ -248,8 +286,25 @@ def update(service_id):
 #
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>/service_bindings/<binding_id>", methods=['PUT'])
-def bind(service_id, binding_id):
+def bind(instance_id, binding_id):
     checkapiversion()
+
+    logging.info("BINDING instance {}".format(instance_id))
+    blueprint = database.get_blueprint_by_deployment_id(instance_id)
+    binder_name = blueprint['binder']
+    if not binder_name in binders: 
+      return 'binder not configured: {}'.format(binder_name), 500
+    binder = binders[binder_name](logger)
+    binder_config = blueprint['binder_config']
+    outputs = eval(database.get_deployment(instance_id)['outputs'])
+    logger.debug("outputs = {}".format(outputs))
+    binder.configure(binder_config, outputs) 
+      
+    # Call binder
+    # TEST: REMOVE
+    return '{ "credentials": { "uri":"asd://blorf:asdf", "username":"someuser"}}', 201
+    
+    #return "Not implemented", 400
 
 
 ###########################################################
@@ -257,8 +312,11 @@ def bind(service_id, binding_id):
 #
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>/service_bindings/<binding_id>", methods=['DELETE'])
-def unbind(service_id, binding_id):
+def unbind(instance_id, binding_id):
     checkapiversion()
+    logger.info("UNBINDING {}".format(binding_id))
+    # remove binding from binder
+    return "{}", 200
 
 
 ########################################
