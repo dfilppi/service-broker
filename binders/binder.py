@@ -15,5 +15,5 @@ class Binder():
     pass
 
   @abstractmethod
-  def get_creds(self, service):
+  def get_creds(self):
     pass

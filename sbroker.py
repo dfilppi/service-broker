@@ -31,6 +31,8 @@ auto = Autodoc(app)
 worker = None
 database = None
 client = None
+binder = None
+binder_name = None
 binders = { "vault": VaultBinder }
 
 logging.basicConfig(filename="sbroker.log", format="%(asctime)s %(levelname)-7s %(module)s %(funcName)8.8s - %(message)s")
@@ -52,7 +54,6 @@ def parseargs():
         --binder-creds <creds> Binding service connection info & credentials (string).  Binder specific.
     """
        
-    global binders
     host = None
     port = 80
     tenant = 'default_tenant'
@@ -88,17 +89,23 @@ def parseargs():
     if not binder_creds:
         print 'WARNING: No binder credentials supplied'
 
-    binder = binders[binder_name]
-       
-    return host,port,tenant,user,password, binder, binder_creds
+    return host,port,tenant,user,password, binder_name, binder_creds
     
         
 def main():
-    global worker
-    global database
-    global client
-    host, port, tenant, user, password, binder, binder_creds = parseargs()
+    global binders, binder, worker
+    global database, client, binder_name
+
+    host, port, tenant, user, password, binder_name, binder_creds = parseargs()
+    if not binder_name in binders:
+      print "Binder "+binder_name+" not found"
+      sys.exit(1)
+
+    binder = binders[binder_name](logger)
+    binder.connect(binder_creds)
+
     database = db.Database('cfy.db')
+
     client = CloudifyClient(host=host, port=port,
                             trust_all=True, username=user,
                             password=password, tenant=tenant)
@@ -172,9 +179,11 @@ def provision(instance_id):
 
     # parse body  ####################
     body = json.loads(request.data)    
+    logger.debug("body = {}".format(body))
     service_id = body['service_id']
-    logger.debug("service_id = {}".format(service_id))
-    blueprint_id = database.get_blueprint_by_id(service_id)[0]
+    blueprint_row = database.get_blueprint_by_id(service_id)
+    blueprint_id = blueprint_row['cloudify_id']
+    logger.debug("blueprint_id = {}".format(blueprint_id))
     plan_id = body['plan_id']
     # ignore context for now
     # ignore org_guid
@@ -194,9 +203,12 @@ def provision(instance_id):
 
     inputs = body['parameters'] if 'parameters' in body else None
 
-    deployment = client.deployments.create(blueprint_id, instance_id, inputs)
+    logger.debug("create deployment: blueprint id: {} instance id {} inputs {}".format(
+                     str(blueprint_id), str(instance_id), str(inputs)))
+    deployment = client.deployments.create(blueprint_row['cloudify_id'], instance_id, inputs)
 
     if not deployment:
+      logger.error("Deployment creation failed")
       return "Deployment creation failed", 500
 
     # Launch install execution
@@ -220,7 +232,7 @@ def provision(instance_id):
       return "Install execution failed", 500
 
     # Update deployment state
-    database.create_deployment(instance_id, blueprint_id)
+    database.create_deployment(instance_id, blueprint_row['id'])
 
     return "{}",202
 
@@ -245,7 +257,7 @@ def poll(instance_id):
 
     status = database.get_deployment_status(instance_id)
     if not status:
-      logging.error("NO STATUS")
+      logging.error("NO STATUS found for instance {}".format(instance_id))
       return jsonify({"description":"Unknown instance"}), 500
     elif status == "started":
       return jsonify({"state":"in progress","description":"Service instantiation in progress"})
@@ -287,25 +299,26 @@ def update(service_id):
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>/service_bindings/<binding_id>", methods=['PUT'])
 def bind(instance_id, binding_id):
+    global binder_name
     checkapiversion()
 
     logging.info("BINDING instance {}".format(instance_id))
     blueprint = database.get_blueprint_by_deployment_id(instance_id)
-    binder_name = blueprint['binder']
-    if not binder_name in binders: 
-      return 'binder not configured: {}'.format(binder_name), 500
-    binder = binders[binder_name](logger)
+    if not blueprint:
+      logger.error("blueprint not found for instance: {}".format(instance_id))
+      return "internal error", 500
+    bname = blueprint['binder']
+    if binder_name != bname:
+      return 'binder not configured: {}'.format(bname), 500
     binder_config = blueprint['binder_config']
     outputs = eval(database.get_deployment(instance_id)['outputs'])
     logger.debug("outputs = {}".format(outputs))
     binder.configure(binder_config, outputs) 
       
-    # Call binder
-    # TEST: REMOVE
-    return '{ "credentials": { "uri":"asd://blorf:asdf", "username":"someuser"}}', 201
+    result = { "credentials": binder.get_creds() }
     
-    #return "Not implemented", 400
-
+    return jsonify(result), 200
+    
 
 ###########################################################
 # Unbind
