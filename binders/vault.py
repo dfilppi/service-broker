@@ -84,7 +84,10 @@ class VaultBinder(Binder):
     creds = self._client.read(self._config['__credpath__'])['data']
     self._log.debug("get_creds from {} return: {}".format(self._config['__path__'], creds))
     if self._outputs:
-      creds.update(self._outputs)
+      for k,v in self._outputs.iteritems():
+        if isinstance(v,dict):
+          self._log.debug("updating creds with output: {}".format(v))
+          creds.update(v)
     return creds
 
   def _eval_config(self, config, outputs, start ):
