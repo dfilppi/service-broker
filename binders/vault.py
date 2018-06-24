@@ -106,5 +106,3 @@ class VaultBinder(Binder):
     ss =  config[beg+2: end].strip()
     evals = "outputs[\"outputs\"]"+ss
     return eval(evals), beg, end
-
-def _sub_outputs(confstr, outputs
