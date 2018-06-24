@@ -44,6 +44,9 @@ class VaultBinder(Binder):
       self._config = eval(confstr)
       return
 
+    # Loop through all output substitutions in config string
+    # Result must be a dict, which will be passed to vault to
+    # configure the secret engine
     i = 0
     end = -1
     self._config = ""
@@ -93,6 +96,8 @@ class VaultBinder(Binder):
   def _eval_config(self, config, outputs, start ):
     """
     returns results from parse, and begining and end of location
+    searches for expression bounded by {{}}, and substitutes the Cloudify
+    output of the same name
     """
     beg = config.find("{{", start)
     if beg<0 or beg >len(config)-1:
@@ -101,3 +106,5 @@ class VaultBinder(Binder):
     ss =  config[beg+2: end].strip()
     evals = "outputs[\"outputs\"]"+ss
     return eval(evals), beg, end
+
+def _sub_outputs(confstr, outputs

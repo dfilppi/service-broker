@@ -21,10 +21,11 @@ import db
 #   - header X-Broker-API-Origin ignored
 #   - simple binding: no "BindResource"
 #   - simple binding: no service binding schema
-#   - binding limited to credential binding
 
 VERSION_HEADER = 'X-Broker-API-Version'
 BROKER_PORT = 5000
+CFY_INSTALL = "install"
+CFY_UNINSTALL = "uninstall"
 
 app = Flask("cloudify-service-broker")
 auto = Autodoc(app)
@@ -128,6 +129,10 @@ def main():
 @auto.doc()
 @app.route("/v2/catalog", methods=['GET'])
 def get_catalog():
+    """ Return service catalog to K8S
+        Return blueprints list from Cloudify manager
+        Only support default plan
+    """
     checkapiversion()
     logger.debug("CATALOG GET")
     blueprints = database.list_blueprints(canonical=True)
@@ -164,6 +169,10 @@ def get_catalog():
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>", methods=['PUT'])
 def provision(instance_id):
+    """ Provision service by creating a deployment and running install workflow
+        Deployment ID in Cloudify = instance id
+        Launched execution is tracked by the sync thread
+    """
     checkapiversion()
 
     logger.debug( "PROVISIONING")
@@ -217,7 +226,7 @@ def provision(instance_id):
     execution = None
     for i in range(30):
       try:
-        execution = client.executions.start(instance_id, "install")
+        execution = client.executions.start(instance_id, CFY_INSTALL)
         break
       except (exceptions.DeploymentEnvironmentCreationPendingError,
               exceptions.DeploymentEnvironmentCreationInProgressError):
@@ -247,6 +256,10 @@ def provision(instance_id):
 @auto.doc()
 @app.route("/v2/service_instances/<instance_id>/last_operation", methods=['GET'])
 def poll(instance_id):
+    """ Called by K8S for async processes (installation for now)
+        This function polls the database, which is being updated by the 
+        sync thread
+    """
     checkapiversion()
 
     logging.debug("POLLING")
@@ -280,7 +293,8 @@ def poll(instance_id):
 def deprovision(instance_id):
     checkapiversion()
     logger.info("DEPROVISIONING {}".format(instance_id))
-    return "{}", 200
+
+    return "{}", 202
 
 
 ###########################################################
