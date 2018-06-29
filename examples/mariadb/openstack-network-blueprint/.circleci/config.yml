@@ -1,0 +1,34 @@
+version: 2
+
+checkout:
+  post:
+    - >
+      if [ -n "$CI_PULL_REQUEST" ]; then
+        PR_ID=${CI_PULL_REQUEST##*/}
+        git fetch origin +refs/pull/$PR_ID/merge:
+        git checkout -qf FETCH_HEAD
+      fi
+
+jobs:
+  test_validation:
+    machine:
+      enabled: true
+      python:
+        version: pypy-2.2.1
+
+    steps:
+      - checkout
+      - run: wget http://cloudify-release-eu.s3.amazonaws.com/cloudify/18.4.17/release/cloudify-manager-docker-image-18.4.17.tar
+      - run: docker load -i cloudify-manager-docker-image-18.4.17.tar
+      - run: rm cloudify-manager-docker-image-18.4.17.tar
+      - run: docker run --name cfy_manager -d --restart unless-stopped -v /sys/fs/cgroup:/sys/fs/cgroup:ro --tmpfs /run --tmpfs /run/lock --security-opt seccomp:unconfined --cap-add SYS_ADMIN --network host docker-cfy-manager:latest
+      - run: pip install cloudify
+      - run: cfy profiles use localhost -u admin -p admin -t default_tenant
+      - run: cfy plugins upload https://github.com/cloudify-cosmo/cloudify-openstack-plugin/releases/download/2.7.4/cloudify_openstack_plugin-2.7.4-py27-none-linux_x86_64-centos-Core.wgn -y http://www.getcloudify.org/spec/openstack-plugin/2.7.4/plugin.yaml
+      - run: cfy blueprints upload simple-blueprint.yaml -b bp0 > /dev/null 2>&1
+
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - test_validation

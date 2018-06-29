@@ -1,0 +1,62 @@
+inputs:
+
+  new_database_password:
+    default: new_password
+
+  new_database_user:
+    default: demo
+
+  mysql_commands:
+    default:
+    - { concat: [ "UPDATE mysql.user SET Password = PASSWORD('", { get_input: new_database_password }, "') WHERE User = 'root'" ] }
+    - "DROP USER ''@'localhost'"
+    # # - { concat: [ "DROP USER ''@''" ] }
+    - "DROP DATABASE test"
+    - { concat: [ "CREATE USER '", { get_input: new_database_user }, "'@'%' IDENTIFIED BY '", { get_input: new_database_password }, "'" ] }
+    - { concat: [ "GRANT ALL PRIVILEGES ON *.* TO '", { get_input: new_database_user }, "'@'%' WITH GRANT OPTION" ] }
+    - "FLUSH PRIVILEGES"
+    - CREATE DATABASE VAULT_TEST
+
+node_templates:
+
+  mysql:
+    type: cloudify.nodes.DBMS
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/create.py
+        configure:
+          implementation: scripts/configure.py
+          inputs:
+            mysql_commands: { get_input: mysql_commands }
+        start:
+          implementation: scripts/start.py
+          inputs:
+            cluster_addresses: { get_attribute: [ cluster, cluster_addresses ] }
+            master:  { get_attribute: [ cluster, master ] }
+    relationships:
+    - type: cloudify.relationships.contained_in
+      target: host
+    - type: cloudify.relationships.depends_on
+      target: cluster
+      source_interfaces:
+        cloudify.interfaces.relationship_lifecycle:
+          postconfigure:
+            implementation: scripts/cluster.py
+      properties:
+        connection_type: all_to_one
+
+  cluster:
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/cluster.py
+          executor: central_deployment_agent
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: host
+      properties:
+        connection_type: all_to_all
+    - type: cloudify.relationships.depends_on
+      target: mysql_requirements

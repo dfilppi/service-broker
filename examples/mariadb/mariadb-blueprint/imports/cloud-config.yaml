@@ -1,0 +1,42 @@
+node_templates:
+
+  cloudify_host_cloud_config:
+    type: cloudify.nodes.CloudInit.CloudConfig
+    properties:
+      resource_config:
+        users:
+          - name: { get_input: agent_user }
+            primary-group: wheel
+            shell: /bin/bash
+            sudo: ['ALL=(ALL) NOPASSWD:ALL']
+            ssh-authorized-keys:
+              - { get_input: agent_key_public }
+        write_files:
+          - path: /etc/yum.repos.d/mariadb.repo
+            owner: root:root
+            permissions: '0444'
+            content: |
+              [mariadb]
+              name = MariaDB
+              baseurl = http://yum.mariadb.org/10.1/centos7-amd64
+              gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+              gpgcheck=1
+        packages:
+          - [MariaDB-server]
+          - [MariaDB-client]
+          - [MariaDB-compat]
+          - [galera]
+          - [socat]
+          - [jemalloc]
+          - [python-pip]
+          - [python-wheel]
+          - [python-setuptools]
+          - [python-devel]
+          - [mysql-devel]
+          - [MySQL-python]
+          - [firewalld]
+          - [xinetd]
+        runcmd:
+          - 'setenforce 0'
+          - [ systemctl, enable, mariadb ]
+          - [ systemctl, start, mariadb ]
