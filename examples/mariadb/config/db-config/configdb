@@ -1,0 +1,5 @@
+DB=$1
+SECRETPATH=$2
+BPNAME=$3
+
+sqlite3 $DB "update blueprints set binder = \"vault\", binder_config = \"$SECRETPATH\" where cloudify_id = \"$BPNAME\""

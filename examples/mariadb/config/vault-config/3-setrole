@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# This can be done at runtime if role mapped to plan.
+# Select statement must be predefined/ttls need to be predefined
+# Roles need to be predefined.
+
+VAULT_ADDR=http://$1:8200 vault write database/roles/my-role db_name=vault_test creation_statements="CREATE USER '{{name}}'@'%' identified by '{{password}}'; grant select on *.* to '{{name}}'@'%';" default_ttl="1h" max_ttl="24h"

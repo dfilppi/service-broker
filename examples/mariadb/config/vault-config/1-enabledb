@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# This should be called by vault admin, not sbroker
+
+VAULT_ADDR=http://$1:8200 vault secrets enable database
