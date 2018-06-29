@@ -1,0 +1,6 @@
+apiVersion: servicecatalog.k8s.io/v1beta1
+kind: ClusterServiceBroker
+metadata:
+  name: cloudify-broker
+spec:
+  url: http://192.168.33.10:5000

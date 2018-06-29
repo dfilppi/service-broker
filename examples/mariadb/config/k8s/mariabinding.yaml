@@ -1,0 +1,9 @@
+apiVersion: servicecatalog.k8s.io/v1beta1
+kind: ServiceBinding
+metadata:
+  name: maria-binding
+  namespace: test-ns
+spec:
+  instanceRef:
+    name: mariadb-instance
+  secretName: mariadb-credentials
